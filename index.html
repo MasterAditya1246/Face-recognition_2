@@ -1,6 +1,4 @@
-02.21 7:33 PM
-<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -21,7 +19,10 @@
         canvas {
             position: absolute;
             top: 0;
-            left: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 640px;
+            height: 480px;
         }
         .loading {
             display: none;
@@ -54,96 +55,101 @@
     <canvas id="overlay"></canvas>
     <p class="loading" id="loadingText">Recognizing Face...</p>
     <button onclick="captureFace()">Store Face</button>
-    <button onclick="clearStoredFaces()">Clear Stored Faces</button>
+    <button onclick="clearStoredFaces()">Clear Stored Faces</button><script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const loadingText = document.getElementById('loadingText');
 
-    <script>
-        const video = document.getElementById('video');
-        const overlay = document.getElementById('overlay');
-        const ctx = overlay.getContext('2d');
-        const loadingText = document.getElementById('loadingText');
+    let faceMatcher;
+    let labeledDescriptors = [];
 
-        let faceMatcher;
-        let labeledDescriptors = [];
+    async function startFaceRecognition() {
+        await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models/'),
+            faceapi.nets.faceLandmark68Net.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models/'),
+            faceapi.nets.faceRecognitionNet.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models/')
+        ]);
 
-        async function startFaceRecognition() {
-            await faceapi.nets.tinyFaceDetector.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models/');
-            await faceapi.nets.faceLandmark68Net.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models/');
-            await faceapi.nets.faceRecognitionNet.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models/');
-            
-            navigator.mediaDevices.getUserMedia({ video: {} })
-                .then(stream => { video.srcObject = stream; });
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
+            .then(stream => {
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    video.play();
+                    recognizeFace();
+                };
+            })
+            .catch(error => {
+                alert("Camera access denied! Please allow camera permissions.");
+            });
 
-            // Load stored faces
-            let storedFaces = JSON.parse(localStorage.getItem("faces")) || [];
-            labeledDescriptors = storedFaces.map(face => 
-                new faceapi.LabeledFaceDescriptors(face.name, [new Float32Array(face.descriptor)])
-            );
+        let storedFaces = JSON.parse(localStorage.getItem("faces")) || [];
+        labeledDescriptors = storedFaces.map(face => 
+            new faceapi.LabeledFaceDescriptors(face.name, [new Float32Array(face.descriptor)])
+        );
+        faceMatcher = new faceapi.FaceMatcher(labeledDescriptors);
+    }
 
-            faceMatcher = new faceapi.FaceMatcher(labeledDescriptors);
-
-            video.addEventListener('play', recognizeFace);
+    async function captureFace() {
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+        if (!detection) {
+            alert("No face detected. Try again!");
+            return;
         }
 
-        async function captureFace() {
-            const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
-            if (!detection) {
-                alert("No face detected. Try again!");
-                return;
+        let storedFaces = JSON.parse(localStorage.getItem("faces")) || [];
+        if (storedFaces.length >= 5) {
+            alert("Memory full! Only 5 faces can be stored.");
+            return;
+        }
+
+        let name = prompt("Enter a name for this face:");
+        if (!name) return;
+
+        let descriptorArray = Array.from(detection.descriptor);
+        storedFaces.push({ name, descriptor: descriptorArray });
+        localStorage.setItem("faces", JSON.stringify(storedFaces));
+
+        alert(`${name} stored successfully!`);
+        location.reload();
+    }
+
+    async function recognizeFace() {
+        const displaySize = { width: video.width, height: video.height };
+        faceapi.matchDimensions(overlay, displaySize);
+
+        setInterval(async () => {
+            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+            if (detections.length > 0) {
+                loadingText.style.display = 'block';
+                
+                const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                resizedDetections.forEach(detection => {
+                    const bestMatch = faceMatcher ? faceMatcher.findBestMatch(detection.descriptor) : "Unknown";
+
+                    const { x, y, width, height } = detection.detection.box;
+                    ctx.strokeStyle = 'cyan';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(x, y, width, height);
+                    ctx.fillStyle = 'cyan';
+                    ctx.fillText(bestMatch.toString(), x, y - 10);
+                });
+
+                setTimeout(() => { loadingText.style.display = 'none'; }, 1000);
             }
+        }, 500);
+    }
 
-            let storedFaces = JSON.parse(localStorage.getItem("faces")) || [];
-            if (storedFaces.length >= 5) {
-                alert("Memory full! Only 5 faces can be stored.");
-                return;
-            }
+    function clearStoredFaces() {
+        localStorage.removeItem("faces");
+        alert("All stored faces have been deleted!");
+        location.reload();
+    }
 
-            let name = prompt("Enter a name for this face:");
-            if (!name) return;
+    startFaceRecognition();
+</script>
 
-            let descriptorArray = Array.from(detection.descriptor);
-            storedFaces.push({ name, descriptor: descriptorArray });
-
-            localStorage.setItem("faces", JSON.stringify(storedFaces));
-
-            alert(`${name} stored successfully!`);
-            location.reload(); // Reload page to update face matcher
-        }
-
-        async function recognizeFace() {
-            const displaySize = { width: video.width, height: video.height };
-            faceapi.matchDimensions(overlay, displaySize);
-
-            setInterval(async () => {
-                const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
-                ctx.clearRect(0, 0, overlay.width, overlay.height);
-
-                if (detections.length > 0) {
-                    loadingText.style.display = 'block';
-                    
-                    const resizedDetections = faceapi.resizeResults(detections, displaySize);
-                    resizedDetections.forEach(detection => {
-                        const bestMatch = faceMatcher ? faceMatcher.findBestMatch(detection.descriptor) : "Unknown";
-
-                        const { x, y, width, height } = detection.detection.box;
-                        ctx.strokeStyle = 'cyan';
-                        ctx.lineWidth = 3;
-                        ctx.strokeRect(x, y, width, height);
-                        ctx.fillStyle = 'cyan';
-                        ctx.fillText(bestMatch.toString(), x, y - 10);
-                    });
-
-                    setTimeout(() => { loadingText.style.display = 'none'; }, 1000);
-                }
-            }, 500);
-        }
-
-        function clearStoredFaces() {
-            localStorage.removeItem("faces");
-            alert("All stored faces have been deleted!");
-            location.reload();
-        }
-
-        startFaceRecognition();
-    </script>
 </body>
 </html>
